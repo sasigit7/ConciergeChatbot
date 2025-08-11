@@ -1,0 +1,9 @@
+{
+  "name": "widget",
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "apps/src",
+  "projectType": "application",
+  "tags": ["type:frontend", "scope:apps"],
+  "// targets": "to see all targets run: nx show project widget --web",
+  "targets": {}
+}
