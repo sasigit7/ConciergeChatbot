@@ -1,14 +1,39 @@
+import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
-import { AppModule } from './app/app.module';
+import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { AppModule } from './app.module';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
-  const config = app.get(ConfigService);
-  const port = Number(process.env.PORT || config.get<number>('PORT') || 3000);
+  const app = await NestFactory.create(AppModule, { 
+    logger: ['error', 'warn', 'log', 'debug', 'verbose'] 
+  });
+  
+  const configService = app.get(ConfigService);
+  const port = configService.get<number>('app.port');
+  const corsOptions = configService.get('app.cors');
+  
+  // Enable CORS
+  app.enableCors(corsOptions);
+  
+  // Global validation pipe
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      transform: true,
+      forbidNonWhitelisted: true,
+    }),
+  );
+  
+  // API prefix
+  app.setGlobalPrefix('api');
+  
   await app.listen(port);
-  // eslint-disable-next-line no-console
-  console.log(`Backend listening on http://localhost:${port}`);
+  console.log(`🚀 Backend is running on: http://localhost:${port}/api`);
+  console.log(`🔌 WebSocket server is running on: ws://localhost:${port}`);
 }
 
-bootstrap();
+bootstrap().catch((err) => {
+  console.error('Failed to bootstrap backend', err);
+  process.exit(1);
+});
