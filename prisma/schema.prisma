@@ -1,12 +1,8 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+// This is your Prisma schema file for the AI Concierge Chatbot
+// Learn more about it in the docs: https://pris.ly/d/prisma-schema
 
 generator client {
   provider = "prisma-client-js"
-  output   = "../generated/prisma"
 }
 
 datasource db {
@@ -14,79 +10,262 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ==========================================
+// MULTI-TENANT MODELS
+// ==========================================
+
 model Tenant {
-  id             String         @id @default(cuid())
-  name           String
-  slug           String         @unique
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
-  users          User[]
-  apiKeys        ApiKey[]
-  conversations  Conversation[]
-  messages       Message[]
-  embeddings     Embedding[]
-  webhookEvents  WebhookEvent[]
+  id                String    @id @default(cuid())
+  name              String
+  slug              String    @unique
+  subscriptionTier  String    @default("starter") // starter, professional, premium
+  isActive          Boolean   @default(true)
+  settings          Json      @default("{}")
+  metadata          Json?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  
+  // Relations
+  users             User[]
+  conversations     Conversation[]
+  integrations      Integration[]
+  knowledgeBase     KnowledgeBase[]
+  analytics         Analytics[]
+  webhooks          Webhook[]
+  customFields      CustomField[]
+  
+  @@index([slug])
+  @@index([isActive])
 }
 
 model User {
-  id            String         @id @default(cuid())
-  tenantId      String
-  email         String         @unique
-  passwordHash  String
-  role          String
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  conversations Conversation[]
+  id          String    @id @default(cuid())
+  email       String    @unique
+  password    String
+  firstName   String
+  lastName    String
+  role        String    @default("admin") // admin, operator, viewer
+  isActive    Boolean   @default(true)
+  lastLogin   DateTime?
+  metadata    Json?
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  // Relations
+  sessions    Session[]
+  
+  @@index([email])
+  @@index([tenantId])
 }
 
-model ApiKey {
-  id          String   @id @default(cuid())
-  tenantId    String
-  key         String   @unique
-  createdAt   DateTime @default(now())
-  lastUsedAt  DateTime?
-  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  
+  @@index([token])
+  @@index([userId])
 }
+
+// ==========================================
+// CONVERSATION MODELS
+// ==========================================
 
 model Conversation {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   tenantId    String
-  userId      String?
-  status      String   @default("open")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  channel     String    // web, whatsapp, facebook, sms
+  customerId  String?
+  customer    Customer? @relation(fields: [customerId], references: [id])
+  status      String    @default("active") // active, pending_handoff, closed
+  sessionId   String?
+  metadata    Json?
+  rating      Int?      // 1-5 star rating
+  feedback    String?
+  startedAt   DateTime  @default(now())
+  endedAt     DateTime?
+  
+  // Relations
   messages    Message[]
-  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  user        User?    @relation(fields: [userId], references: [id])
+  
+  @@index([tenantId, status])
+  @@index([customerId])
+  @@index([sessionId])
 }
 
 model Message {
-  id             String        @id @default(cuid())
+  id             String       @id @default(cuid())
   conversationId String
-  tenantId       String
-  sender         String
-  content        String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String       // user, assistant, system
+  content        String       @db.Text
+  intent         String?      // detected intent
+  confidence     Float?       // confidence score
   metadata       Json?
-  createdAt      DateTime      @default(now())
-  conversation   Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  tenant         Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  
+  @@index([conversationId])
+  @@index([role])
 }
 
-model Embedding {
-  id        String   @id @default(cuid())
-  tenantId  String
-  content   String
-  vector    Bytes
-  createdAt DateTime @default(now())
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+model Customer {
+  id            String         @id @default(cuid())
+  email         String?
+  phone         String?
+  name          String?
+  avatarUrl     String?
+  metadata      Json?
+  tags          String[]       @default([])
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  
+  // Relations
+  conversations Conversation[]
+  bookings      Booking[]
+  orders        Order[]
+  
+  @@index([email])
+  @@index([phone])
 }
 
-model WebhookEvent {
-  id        String   @id @default(cuid())
+// ==========================================
+// BUSINESS FEATURES
+// ==========================================
+
+model Integration {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  type        String    // calendly, google_calendar, square, toast, hubspot, salesforce
+  name        String
+  credentials Json      // Encrypted credentials
+  settings    Json?
+  isActive    Boolean   @default(true)
+  lastSync    DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  @@unique([tenantId, type])
+  @@index([tenantId, isActive])
+}
+
+model KnowledgeBase {
+  id        String    @id @default(cuid())
   tenantId  String
-  type      String
-  payload   Json
-  createdAt DateTime @default(now())
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  title     String
+  content   String    @db.Text
+  category  String?   // faq, product, service, policy
+  tags      String[]  @default([])
+  embedding Float[]   // pgvector embedding for semantic search
+  metadata  Json?
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  
+  @@index([tenantId, category])
+  @@index([tenantId, isActive])
+}
+
+model Booking {
+  id         String    @id @default(cuid())
+  tenantId   String
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id])
+  service    String
+  date       DateTime
+  duration   Int       // in minutes
+  status     String    @default("pending") // pending, confirmed, cancelled, completed
+  notes      String?
+  metadata   Json?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  
+  @@index([customerId])
+  @@index([date])
+  @@index([status])
+}
+
+model Order {
+  id         String      @id @default(cuid())
+  tenantId   String
+  customerId String?
+  customer   Customer?   @relation(fields: [customerId], references: [id])
+  items      Json        // Array of order items
+  total      Float
+  status     String      @default("pending") // pending, confirmed, preparing, ready, delivered, cancelled
+  type       String      // pickup, delivery, dine-in
+  notes      String?
+  metadata   Json?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  
+  @@index([customerId])
+  @@index([status])
+}
+
+// ==========================================
+// ANALYTICS & MONITORING
+// ==========================================
+
+model Analytics {
+  id                 String    @id @default(cuid())
+  tenantId           String
+  tenant             Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  date               DateTime  @db.Date
+  totalConversations Int       @default(0)
+  uniqueUsers        Int       @default(0)
+  messagesCount      Int       @default(0)
+  resolvedQueries    Int       @default(0)
+  handoffRate        Float     @default(0)
+  avgResponseTime    Float     @default(0) // in seconds
+  avgRating          Float?
+  topIntents         Json?     // Array of {intent, count}
+  channelBreakdown   Json?     // {web: x, whatsapp: y, ...}
+  metadata           Json?
+  
+  @@unique([tenantId, date])
+  @@index([tenantId, date])
+}
+
+model Webhook {
+  id        String    @id @default(cuid())
+  tenantId  String
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  url       String
+  events    String[]  // conversation.started, conversation.ended, message.received, etc.
+  secret    String
+  isActive  Boolean   @default(true)
+  metadata  Json?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  
+  @@index([tenantId, isActive])
+}
+
+// ==========================================
+// CUSTOMIZATION
+// ==========================================
+
+model CustomField {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  entityType  String   // customer, conversation, booking, order
+  fieldName   String
+  fieldType   String   // text, number, date, boolean, select
+  options     Json?    // For select type fields
+  isRequired  Boolean  @default(false)
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@unique([tenantId, entityType, fieldName])
+  @@index([tenantId, entityType])
 }
